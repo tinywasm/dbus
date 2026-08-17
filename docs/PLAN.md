@@ -3,8 +3,9 @@ PLAN: "feat: minimal D-Bus session bus client with no external dependencies"
 TAG: v0.1.0
 EXECUTOR: jules
 REVIEWER: none
-STATUS: running
+STATUS: review
 SESSION: 14543807343571464462
+PR: https://github.com/tinywasm/dbus/pull/1
 ---
 
 > This plan is dispatched via the CodeJob workflow. See skill: agents-workflow.
