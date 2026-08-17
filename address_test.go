@@ -1,12 +1,10 @@
-package tests
+package dbus
 
 import (
 	"errors"
 	"os"
 	"reflect"
 	"testing"
-
-	"github.com/tinywasm/dbus"
 )
 
 func TestAddressParsing(t *testing.T) {
@@ -41,7 +39,7 @@ func TestAddressParsing(t *testing.T) {
 			name:    "empty env without XDG_RUNTIME_DIR",
 			envAddr: "",
 			envXDG:  "",
-			wantErr: dbus.ErrNoSessionBus,
+			wantErr: ErrNoSessionBus,
 		},
 	}
 
@@ -57,7 +55,7 @@ func TestAddressParsing(t *testing.T) {
 				os.Setenv("XDG_RUNTIME_DIR", tt.envXDG)
 			}
 
-			addr, err := dbus.GetSessionBusAddress()
+			addr, err := getSessionBusAddress()
 			if tt.envAddr == "" && tt.envXDG == "" {
 				if err != tt.wantErr {
 					t.Fatalf("expected error %v, got %v", tt.wantErr, err)
@@ -68,7 +66,7 @@ func TestAddressParsing(t *testing.T) {
 				t.Fatalf("unexpected error getting session bus address: %v", err)
 			}
 
-			closer, err := dbus.DialAddress(addr)
+			closer, err := dialAddress(addr)
 			if tt.wantErr != nil {
 				if err == nil || err.Error() != tt.wantErr.Error() {
 					t.Fatalf("expected error %v, got %v", tt.wantErr, err)

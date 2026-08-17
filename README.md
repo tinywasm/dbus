@@ -1,4 +1,5 @@
 # tinywasm/dbus
+<img src="docs/img/badges.svg">
 
 A minimal, zero-dependency Go client for the Linux D-Bus session bus.
 
