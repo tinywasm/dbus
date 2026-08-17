@@ -3,8 +3,9 @@ PLAN: "feat: minimal D-Bus session bus client with no external dependencies"
 TAG: v0.1.0
 EXECUTOR: jules
 REVIEWER: none
-STATUS: running
+STATUS: review
 SESSION: 14543807343571464462
+PR: https://github.com/tinywasm/dbus/pull/1
 ---
 
 > This plan is dispatched via the CodeJob workflow. See skill: agents-workflow.
@@ -127,8 +128,18 @@ Design notes the executor must honour:
   value carrying the D-Bus error name.
 - `Store` is positional and type-strict. Mismatched arity or type is an error,
   never a silent zero value.
-- No reflection-based marshalling of arbitrary structs. The encoder accepts the
-  concrete types in §4 and returns `ErrUnsupportedType` for anything else.
+- **Keep godbus's reflection-driven codec** (`encoder.go`, `decoder.go`,
+  `Store`). An earlier draft of this plan banned reflection here, aiming at
+  minimalism. That was wrong, and the reason is the consumer: the Secret
+  Service's `Secret` is a struct with signature `(oayays)`, and `CreateItem`
+  takes `a{sv}` while `SearchItems` takes `a{ss}`. With reflection,
+  `keyring/linux` writes `coll.Call(..., props, sec, true)` and the struct
+  marshals itself. Without it, every one of those shapes becomes hand-rolled
+  encoding **in the consumer**, which moves complexity rather than removing it.
+  `tests/secretservice_test.go` locks this in: it drives all seven calls and
+  asserts both the argument shapes the server receives and the reply shapes the
+  client decodes. Reflection costs binary size, and this module is backend-only
+  (never WASM), so that cost is not charged to anything that matters here.
 
 ## 4. The wire format — port it, do not derive it from the table below
 
@@ -369,16 +380,31 @@ what genuinely is not.
 |---|---|---|---|
 | K | `sig_test.go` | `tests/sig_test.go` | nothing — fully in scope |
 | L | `variant_test.go` | `tests/variant_test.go` | any case touching types outside §4's set |
-| M | `encoder_test.go` | `tests/encoder_test.go` | struct/slice-of-struct cases using Go struct tags or reflection-driven signature inference — this module's encoder takes the §4 concrete types directly, no struct tags |
-| N | `decoder_test.go` | `tests/decoder_test.go` | same pruning as M |
-| O | `message_test.go` | `tests/message_test.go` | `UnixFDs`/`UnixFDIndex` cases — §1 excludes FD passing |
+| M | `encoder_test.go` | **`encoder_test.go` (repo root)** | `UnixFD` cases only — the reflection cases stay, see §3 |
+| N | `decoder_test.go` | **`decoder_test.go` (repo root)** | same pruning as M |
+| O | `message_test.go` | **`message_test.go` (repo root)** | `UnixFDs`/`UnixFDIndex` cases — §1 excludes FD passing |
 
-Adapt each ported file mechanically: package name (`dbus_test`, calling the
-public API — these are internal `package dbus` tests upstream, and this module
-keeps its codec unexported, so either move the test package in-tree as
-`package dbus` under `tests/` if Go tooling in this repo expects that layout,
-or expose the minimal internal hooks the tests need; do not weaken a test to
-avoid this, ask instead if the two don't reconcile cleanly). Import paths have
+**Where each test file goes is not a style choice — Go's package rules decide
+it.** A test in `tests/` is a *different package* and can only reach the
+exported API. Appendices M, N and O test the codec, the message envelope and
+address parsing, all of which are unexported. So:
+
+- **Tests that touch internals live in the repo root as `package dbus`** —
+  `encoder_test.go`, `decoder_test.go`, `message_test.go`, `address_test.go`.
+- **Tests that exercise the public API live in `tests/`** — `sig_test.go`,
+  `variant_test.go`, `fakebus_test.go`, `secretservice_test.go`.
+
+Do **not** solve this by adding an `export.go` that re-exports internals so
+`tests/` can reach them. That file is not compiled away — it becomes permanent
+public API, and wrappers like `func NewEncoder(...) *encoder` even return an
+unexported type, which no external caller can name. (Go's real idiom for this
+is `export_test.go`, compiled only during tests — but it only helps tests in
+the *same directory*, which is exactly why the internal tests belong in the
+root.)
+
+Adapt each ported file mechanically: package name, and drop the
+`github.com/tinywasm/dbus` import plus the `dbus.` qualifiers for the files
+that move to the root. Import paths have
 no upstream module to strip since this module has no dependencies.
 
 **What is not ported, and is written fresh instead** — because upstream tests
@@ -436,10 +462,10 @@ and expected.
 
 What must **not** be carried over is godbus's generality: object export
 (`export.go`, `server_interfaces.go` — not appended), name ownership,
-introspection, the reflection-driven `Store`/type-inference codec in
-`dbus.go` (not appended — see §3's design note on why this module's `Store` is
-written fresh instead), unix-FD passing, TCP/nonce-TCP transports, and
-`DBUS_COOKIE_SHA1` auth (`auth_sha1.go` — not appended). Each subsection in §4
+introspection, unix-FD passing, TCP/nonce-TCP transports, and
+`DBUS_COOKIE_SHA1` auth (`auth_sha1.go` — not appended). The reflection-driven
+`Store` and codec **are** carried over — see §3, which explains why banning
+them was a mistake. Each subsection in §4
 already says exactly what to drop from its appendix; that reduction — the
 surface, not the wire format — is the entire point of this module existing
 instead of a `go.mod` line pointing at godbus.
@@ -3078,9 +3104,9 @@ func TestVariantStore(t *testing.T) {
 }
 ```
 
-### Appendix M — `encoder_test.go` (test source, port into `tests/`)
+### Appendix M — `encoder_test.go` (test source, port into the repo root)
 
-Port into tests/encoder_test.go, pruning struct/reflection-driven cases per §8's table.
+Port into the repo root as `encoder_test.go` (package dbus — it touches the unexported encoder), pruning only the UnixFD cases. See §8.
 
 ```go
 package dbus
@@ -3514,9 +3540,9 @@ func TestEncodeVariantToUint64(t *testing.T) {
 }
 ```
 
-### Appendix N — `decoder_test.go` (test source, port into `tests/`)
+### Appendix N — `decoder_test.go` (test source, port into the repo root)
 
-Port into tests/decoder_test.go, same pruning as Appendix M.
+Port into the repo root as `decoder_test.go` (package dbus), same pruning as Appendix M.
 
 ```go
 package dbus
@@ -3609,9 +3635,9 @@ func TestSigByteSize(t *testing.T) {
 }
 ```
 
-### Appendix O — `message_test.go` (test source, port into `tests/`)
+### Appendix O — `message_test.go` (test source, port into the repo root)
 
-Port into tests/message_test.go, pruning UnixFD/UnixFDIndex cases — §1 excludes FD passing.
+Port into the repo root as `message_test.go` (package dbus — it calls the unexported validateHeader), pruning UnixFD/UnixFDIndex cases: §1 excludes FD passing.
 
 ```go
 package dbus
